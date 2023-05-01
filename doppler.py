@@ -1,6 +1,6 @@
 #!/usr/bin/python3.9
 
-import ephem, sys, math, requests, json
+import ephem, sys, math, requests, json, argparse
 
 C = 299_792_458 # m/s
 HOUR = 1 / 24
@@ -40,7 +40,6 @@ def should_shift_freqs(f, f_left, f_right):
     left_diff = abs(f_left - f)
     right_diff = abs(f_right - f)
 
-    #print(f"{f}, {f_left} ({left_diff}), {f_right} ({right_diff})")
     return left_diff >= right_diff
 
 """
@@ -343,41 +342,44 @@ def get_current_location():
         lat = coord_req.text.split(',')[0].strip()
         lon = coord_req.text.split(',')[1].strip()
 
-        elev_req = requests.get(f"https://nationalmap.gov/epqs/pqs.php?x={lon}&y={lat}&units=Meters&output=json")
-        elev = float(json.loads(elev_req.text)['USGS_Elevation_Point_Query_Service']['Elevation_Query']['Elevation'])
-
-        return lat, lon, elev
+        return lat, lon
     except:
-        return None, None, None
+        return None, None
 
-"""
-Sysargs:
-    1: Name of the satellite
-    2: Number of channels to compute
-    3: Number of upcoming passes to average from
-"""
 def main():
+    parser = argparse.ArgumentParser(
+        description="Calculate recommended memory channels to communicate with an in-orbit satellite.",
+        epilog=f"Example: python {sys.argv[0]} ISS 5 2"
+    )
+    parser.add_argument("satellite", help="name of the satellite to track. Searches for the name in the Celestrak database.")
+    parser.add_argument("channels", help="number of recommended memory channels to compute", type=int)
+    parser.add_argument("passes", help="number of upcoming passes to average from", type=int)
+    parser.add_argument("--position", "-p", help="latitude and longitude of the observer in the format 'LAT,LON'. (Default: Ddtermines location with a request to https://ipinfo.io/loc)", required=False, default=None)
+    args = parser.parse_args()
+
     # Get observer information
-    lat, lon, elev = get_current_location()
+    if args.position == None:
+        lat, lon = get_current_location()
+    else:
+        lat, lon = args.position.split(',')
     my_loc = ephem.Observer()
     my_loc.lat = lat
     my_loc.lon = lon
-    my_loc.elev = elev
-    print(f"Calculating data for location ({lat}, {lon}) at {elev} meters")
+    print(f"Calculating data for location ({lat}, {lon})...")
 
     # Get satellite information
     TLEs = download_TLEs()
-    name, line1, line2 = search_for_TLE(sys.argv[1], "name", TLEs)
+    name, line1, line2 = search_for_TLE(args.satellite, "name", TLEs)
     if name == None:
-        print(f"CANNOT FIND SATELLITE NAME {sys.argv[1]}!!!")
+        print(f"ERROR: Cannot find satellite name '{args.satellite}'!")
         exit()
 
     satellite = ephem.readtle(name, line1, line2)
     transmitters = lookup_satellite_transmitters(satellite.catalog_number)
 
     # Channels and the number of passes to average from
-    channels = int(sys.argv[2])
-    total_tests = int(sys.argv[3])
+    channels = args.channels
+    total_tests = args.passes
 
     print(f"*** Doppler Shift Compensation for {satellite.name} ({satellite.catalog_number}) ***")
     for transmitter in transmitters:
@@ -423,7 +425,6 @@ def main():
         my_loc = ephem.Observer()
         my_loc.lat = lat
         my_loc.lon = lon
-        my_loc.elev = elev
 
         next_pass = next_high_pass(my_loc, satellite, min_elevation)
         
